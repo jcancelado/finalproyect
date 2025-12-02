@@ -2,7 +2,7 @@
 {% block content %}
   <div style="padding: 2rem;">
     <h1>👥 Clientes y Deudas</h1>
-    <p style="color: #666;">Tienda: <strong>{{ local_id }}</strong></p>
+    <p style="color: #666;">Tienda: <strong>{{ local_name }}</strong></p>
     
     <a href="{{ url_for('tendero_agregar_cliente', local_id=local_id) }}" style="
       display: inline-block;

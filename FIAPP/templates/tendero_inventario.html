@@ -2,7 +2,7 @@
 {% block content %}
   <div style="padding: 2rem;">
     <h1>📦 Inventario</h1>
-    <p style="color: #666;">Tienda: <strong>{{ local_id }}</strong></p>
+    <p style="color: #666;">Tienda: <strong>{{ local_name }}</strong></p>
     
     <a href="{{ url_for('tendero_create_producto', local_id=local_id) }}" style="
       display: inline-block;
@@ -41,7 +41,14 @@
               </p>
               {% if producto_data.get('proveedor') %}
                 <p style="margin: 0.5rem 0; font-size: 0.9rem; color: #666;">
-                  <strong>Proveedor:</strong> {{ producto_data.get('proveedor') }}
+                  <strong>Proveedor:</strong> 
+                  {% set proveedor_id = producto_data.get('proveedor') %}
+                  {% set proveedor_data = proveedores.get(proveedor_id) %}
+                  {% if proveedor_data %}
+                    {{ proveedor_data.nombre }}
+                  {% else %}
+                    {{ proveedor_id }}
+                  {% endif %}
                 </p>
               {% endif %}
             </div>

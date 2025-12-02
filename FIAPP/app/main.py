@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template, redirect, url_for, session
 import os
+import requests
 import time
 from werkzeug.utils import secure_filename
 from database.firebase_config import init_firebase
@@ -251,7 +252,14 @@ def tendero_inventario(local_id):
     if session.get("tipo_usuario") != "tendero":
         return redirect(url_for("login"))
     productos = view_model.listar_productos(local_id)
-    return render_template("tendero_inventario.html", local_id=local_id, productos=productos)
+    local_data = view_model.db.ref.child(f"locales/{local_id}").get() or {}
+    local_name = local_data.get("nombre", local_id)
+    
+    # Obtener mapa de proveedores para resolver nombres
+    owner = session.get('user')
+    proveedores = view_model.listar_proveedores(owner) or {}
+    
+    return render_template("tendero_inventario.html", local_id=local_id, local_name=local_name, productos=productos, proveedores=proveedores)
 
 
 @app.route("/tendero/locales/<local_id>/productos/create", methods=["GET", "POST"])
@@ -259,6 +267,10 @@ def tendero_create_producto(local_id):
     """Tendero: crea un producto en una tienda."""
     if session.get("tipo_usuario") != "tendero":
         return redirect(url_for("login"))
+    
+    # Obtener nombre del local
+    local_data = view_model.db.ref.child(f"locales/{local_id}").get() or {}
+    local_name = local_data.get("nombre", local_id)
     
     # obtener proveedores para el formulario (solo del tendero actual)
     proveedores = {}
@@ -277,24 +289,24 @@ def tendero_create_producto(local_id):
         
         # Validaciones
         if not nombre:
-            return render_template("tendero_create_producto.html", local_id=local_id, error="Nombre requerido", proveedores=proveedores)
+            return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error="Nombre requerido", proveedores=proveedores)
         if not precio:
-            return render_template("tendero_create_producto.html", local_id=local_id, error="Precio requerido", proveedores=proveedores)
+            return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error="Precio requerido", proveedores=proveedores)
         if not stock:
-            return render_template("tendero_create_producto.html", local_id=local_id, error="Stock requerido", proveedores=proveedores)
+            return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error="Stock requerido", proveedores=proveedores)
         
         try:
             precio = float(precio)
             stock = int(stock)
         except ValueError:
-            return render_template("tendero_create_producto.html", local_id=local_id, error="Precio y stock deben ser números")
+            return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error="Precio y stock deben ser números", proveedores=proveedores)
         
         # Guardar imagen si se envió
         imagen_url = None
         if file:
             imagen_url = save_upload_file(file)
             if not imagen_url:
-                return render_template("tendero_create_producto.html", local_id=local_id, error="Imagen no válida (PNG, JPG, GIF, WebP; máx 5MB)", proveedores=proveedores)
+                return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error="Imagen no válida (PNG, JPG, GIF, WebP; máx 5MB)", proveedores=proveedores)
         
         # Generar ID único para producto
         producto_id = f"prod_{int(time.time())}_{os.urandom(3).hex()}"
@@ -304,11 +316,11 @@ def tendero_create_producto(local_id):
             if res.get("success"):
                 return redirect(url_for("tendero_inventario", local_id=local_id))
             else:
-                return render_template("tendero_create_producto.html", local_id=local_id, error=res.get("error"), proveedores=proveedores)
+                return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error=res.get("error"), proveedores=proveedores)
         except Exception as e:
-            return render_template("tendero_create_producto.html", local_id=local_id, error=str(e), proveedores=proveedores)
+            return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, error=str(e), proveedores=proveedores)
     
-    return render_template("tendero_create_producto.html", local_id=local_id, proveedores=proveedores)
+    return render_template("tendero_create_producto.html", local_id=local_id, local_name=local_name, proveedores=proveedores)
 
 
 @app.route("/tendero/locales/<local_id>/clientes")
@@ -317,7 +329,9 @@ def tendero_clientes(local_id):
     if session.get("tipo_usuario") != "tendero":
         return redirect(url_for("login"))
     clientes = view_model.listar_clientes(local_id)
-    return render_template("tendero_clientes.html", local_id=local_id, clientes=clientes)
+    local_data = view_model.db.ref.child(f"locales/{local_id}").get() or {}
+    local_name = local_data.get("nombre", local_id)
+    return render_template("tendero_clientes.html", local_id=local_id, local_name=local_name, clientes=clientes)
 
 
 @app.route("/tendero/locales/<local_id>/clientes/agregar", methods=["GET", "POST"])
@@ -326,12 +340,16 @@ def tendero_agregar_cliente(local_id):
     if session.get("tipo_usuario") != "tendero":
         return redirect(url_for("login"))
     
+    # Obtener nombre del local
+    local_data = view_model.db.ref.child(f"locales/{local_id}").get() or {}
+    local_name = local_data.get("nombre", local_id)
+    
     if request.method == "POST":
         email = request.form.get("email", "").strip()
         deuda_inicial = request.form.get("deuda_inicial", "").strip()
         
         if not email or not deuda_inicial:
-            return render_template("tendero_agregar_cliente.html", local_id=local_id, 
+            return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                  error="Email y deuda son requeridos")
         
         # Verificar que el cliente exista en el sistema
@@ -341,22 +359,22 @@ def tendero_agregar_cliente(local_id):
             user_data = view_model.db.ref.child(f"usuarios/{email_key}").get()
             
             if not user_data:
-                return render_template("tendero_agregar_cliente.html", local_id=local_id,
+                return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                      error=f"El cliente con email '{email}' no existe en el sistema")
             
             # Verificar que sea cliente (no tendero)
             if user_data.get("tipo_usuario") != "cliente":
-                return render_template("tendero_agregar_cliente.html", local_id=local_id,
+                return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                      error="Este usuario no es un cliente")
             
             # Validar deuda
             try:
                 deuda_inicial = float(deuda_inicial)
                 if deuda_inicial < 0:
-                    return render_template("tendero_agregar_cliente.html", local_id=local_id,
+                    return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                          error="La deuda no puede ser negativa")
             except ValueError:
-                return render_template("tendero_agregar_cliente.html", local_id=local_id,
+                return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                      error="La deuda debe ser un número válido")
             
             # Obtener cliente_id (user_id del usuario)
@@ -366,7 +384,7 @@ def tendero_agregar_cliente(local_id):
             # Verificar que no esté ya registrado en esta tienda
             cliente_existente = view_model.db.ref.child(f"locales/{local_id}/clientes/{cliente_id}").get()
             if cliente_existente:
-                return render_template("tendero_agregar_cliente.html", local_id=local_id,
+                return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                      error="Este cliente ya está registrado en esta tienda")
             
             # Agregar cliente
@@ -380,10 +398,10 @@ def tendero_agregar_cliente(local_id):
             
         except Exception as e:
             print(f"[ERROR] al agregar cliente: {e}")
-            return render_template("tendero_agregar_cliente.html", local_id=local_id,
+            return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name,
                                  error=f"Error: {str(e)}")
     
-    return render_template("tendero_agregar_cliente.html", local_id=local_id)
+    return render_template("tendero_agregar_cliente.html", local_id=local_id, local_name=local_name)
 
 
 @app.route("/tendero/locales/<local_id>/cliente/<cliente_id>/abono", methods=["POST"])
@@ -535,6 +553,10 @@ def tendero_editar_producto(local_id, producto_id):
     if session.get("tipo_usuario") != "tendero":
         return redirect(url_for("login"))
     
+    # Obtener nombre del local
+    local_data = view_model.db.ref.child(f"locales/{local_id}").get() or {}
+    local_name = local_data.get("nombre", local_id)
+    
     if request.method == "POST":
         nombre = request.form.get("nombre", "").strip()
         precio = request.form.get("precio", "").strip()
@@ -543,13 +565,13 @@ def tendero_editar_producto(local_id, producto_id):
         file = request.files.get("imagen")
         
         if not nombre or not precio or not stock:
-            return render_template("tendero_editar_producto.html", local_id=local_id, producto_id=producto_id, error="Todos los campos son requeridos")
+            return render_template("tendero_editar_producto.html", local_id=local_id, local_name=local_name, producto_id=producto_id, error="Todos los campos son requeridos")
         
         try:
             precio = float(precio)
             stock = int(stock)
         except ValueError:
-            return render_template("tendero_editar_producto.html", local_id=local_id, producto_id=producto_id, error="Precio y stock deben ser números")
+            return render_template("tendero_editar_producto.html", local_id=local_id, local_name=local_name, producto_id=producto_id, error="Precio y stock deben ser números")
         
         # Preparar datos a actualizar
         update_data = {
@@ -563,14 +585,14 @@ def tendero_editar_producto(local_id, producto_id):
         if file and file.filename != '':
             imagen_url = save_upload_file(file)
             if not imagen_url:
-                return render_template("tendero_editar_producto.html", local_id=local_id, producto_id=producto_id, error="Imagen no válida (PNG, JPG, GIF, WebP; máx 5MB)")
+                return render_template("tendero_editar_producto.html", local_id=local_id, local_name=local_name, producto_id=producto_id, error="Imagen no válida (PNG, JPG, GIF, WebP; máx 5MB)")
             update_data["imagen_url"] = imagen_url
         
         try:
             view_model.db.update_producto(local_id, producto_id, update_data)
             return redirect(url_for("tendero_inventario", local_id=local_id))
         except Exception as e:
-            return render_template("tendero_editar_producto.html", local_id=local_id, producto_id=producto_id, error=str(e))
+            return render_template("tendero_editar_producto.html", local_id=local_id, local_name=local_name, producto_id=producto_id, error=str(e))
     
     # GET: mostrar formulario con datos actuales
     producto = view_model.db.ref.child(f"locales/{local_id}/productos/{producto_id}").get()
@@ -579,7 +601,7 @@ def tendero_editar_producto(local_id, producto_id):
     
     owner = session.get('user')
     proveedores = view_model.listar_proveedores(owner)
-    return render_template("tendero_editar_producto.html", local_id=local_id, producto_id=producto_id, producto=producto, proveedores=proveedores)
+    return render_template("tendero_editar_producto.html", local_id=local_id, local_name=local_name, producto_id=producto_id, producto=producto, proveedores=proveedores)
 
 
 @app.route("/tendero/locales/<local_id>/productos/<producto_id>/eliminar", methods=["POST"])
@@ -724,6 +746,154 @@ def _handle_finance_message(message: str) -> str:
     return ('Puedo ayudar con cálculos: ejemplos:\n- "3 unidades a 12.50"\n- "12.5*3+2"\n- "10% de 250"')
 
 
+def _build_ai_context(tendero_id: str) -> str:
+    """Construye contexto de negocio del tendero para la IA (locales, productos, clientes, deudas)."""
+    try:
+        locales = view_model.listar_locales(tendero_id) or {}
+        context_lines = ["📊 CONTEXTO DE TU NEGOCIO:\n"]
+        
+        if not locales:
+            context_lines.append("No tienes locales registrados aún.")
+            return '\n'.join(context_lines)
+        
+        for local_id, local_data in locales.items():
+            local_name = local_data.get('nombre', local_id)
+            context_lines.append(f"\n🏪 Tienda: {local_name}")
+            
+            # Productos
+            try:
+                productos = view_model.listar_productos(local_id) or {}
+                if productos:
+                    context_lines.append(f"  📦 Productos ({len(productos)}):")
+                    for pid, pdata in list(productos.items())[:5]:  # Top 5
+                        nombre = pdata.get('nombre', 'Sin nombre')
+                        precio = pdata.get('precio', 0)
+                        stock = pdata.get('stock', 0)
+                        context_lines.append(f"    - {nombre}: ${precio} (stock: {stock})")
+                    if len(productos) > 5:
+                        context_lines.append(f"    ... y {len(productos) - 5} más")
+            except Exception as e:
+                print(f"[AI CONTEXT] error productos: {e}")
+            
+            # Clientes y deudas
+            try:
+                clientes = view_model.listar_clientes(local_id) or {}
+                if clientes:
+                    total_deuda = 0
+                    clientes_deudores = 0
+                    for cid, cdata in clientes.items():
+                        deuda = float(cdata.get('deuda', 0))
+                        if deuda > 0:
+                            clientes_deudores += 1
+                            total_deuda += deuda
+                    context_lines.append(f"  👥 Clientes: {len(clientes)} (deudores: {clientes_deudores}, deuda total: ${total_deuda:.2f})")
+            except Exception as e:
+                print(f"[AI CONTEXT] error clientes: {e}")
+        
+        return '\n'.join(context_lines)
+    except Exception as e:
+        print(f"[AI CONTEXT] error building context: {e}")
+        return "Contexto no disponible."
+
+
+def _execute_firebase_query(tendero_id: str, query_type: str) -> str:
+    """Ejecuta consultas específicas en Firebase y devuelve datos formateados para la IA."""
+    try:
+        locales = view_model.listar_locales(tendero_id) or {}
+        if not locales:
+            return "No tienes locales registrados."
+        
+        results = []
+        
+        # Iterar sobre locales del tendero
+        for local_id, local_data in locales.items():
+            local_name = local_data.get('nombre', local_id)
+            
+            if query_type == 'deudas':
+                # Consultar clientes y sus deudas
+                clientes = view_model.listar_clientes(local_id) or {}
+                deudas_list = []
+                for cid, cdata in clientes.items():
+                    nombre = cdata.get('nombre', cdata.get('email', cid))
+                    deuda = float(cdata.get('deuda', 0))
+                    if deuda > 0:
+                        deudas_list.append({'nombre': nombre, 'deuda': deuda, 'cliente_id': cid})
+                
+                # Ordenar por deuda descendente
+                deudas_list.sort(key=lambda x: x['deuda'], reverse=True)
+                
+                if deudas_list:
+                    results.append(f"🏪 {local_name}:")
+                    for d in deudas_list:
+                        results.append(f"  - {d['nombre']}: ${d['deuda']:.2f}")
+                    total = sum(d['deuda'] for d in deudas_list)
+                    results.append(f"  TOTAL DEUDA: ${total:.2f}")
+            
+            elif query_type == 'productos':
+                # Consultar todos los productos
+                productos = view_model.listar_productos(local_id) or {}
+                if productos:
+                    results.append(f"🏪 {local_name} - Productos:")
+                    prods_list = []
+                    for pid, pdata in productos.items():
+                        prods_list.append({
+                            'nombre': pdata.get('nombre', 'Sin nombre'),
+                            'precio': float(pdata.get('precio', 0)),
+                            'stock': int(pdata.get('stock', 0))
+                        })
+                    
+                    # Ordenar por precio descendente
+                    prods_list.sort(key=lambda x: x['precio'], reverse=True)
+                    
+                    for p in prods_list[:10]:  # Top 10
+                        results.append(f"  - {p['nombre']}: ${p['precio']:.2f} (stock: {p['stock']})")
+                    
+                    if len(prods_list) > 10:
+                        results.append(f"  ... y {len(prods_list) - 10} más")
+            
+            elif query_type == 'clientes':
+                # Consultar clientes
+                clientes = view_model.listar_clientes(local_id) or {}
+                if clientes:
+                    results.append(f"🏪 {local_name} - Clientes ({len(clientes)}):")
+                    for cid, cdata in list(clientes.items())[:10]:
+                        nombre = cdata.get('nombre', cdata.get('email', cid))
+                        deuda = float(cdata.get('deuda', 0))
+                        estado = f"Debe: ${deuda:.2f}" if deuda > 0 else "Al día"
+                        results.append(f"  - {nombre}: {estado}")
+                    
+                    if len(clientes) > 10:
+                        results.append(f"  ... y {len(clientes) - 10} más")
+            
+            elif query_type == 'stock':
+                # Consultar productos con bajo stock
+                productos = view_model.listar_productos(local_id) or {}
+                bajo_stock = []
+                for pid, pdata in productos.items():
+                    stock = int(pdata.get('stock', 0))
+                    if stock < 10:
+                        bajo_stock.append({
+                            'nombre': pdata.get('nombre', 'Sin nombre'),
+                            'stock': stock,
+                            'precio': float(pdata.get('precio', 0))
+                        })
+                
+                bajo_stock.sort(key=lambda x: x['stock'])
+                
+                if bajo_stock:
+                    results.append(f"🏪 {local_name} - Bajo Stock (<10 unidades):")
+                    for p in bajo_stock:
+                        results.append(f"  - {p['nombre']}: {p['stock']} unidades (${p['precio']:.2f})")
+                else:
+                    results.append(f"🏪 {local_name}: Todo el stock está bien.")
+        
+        return '\n'.join(results) if results else "No hay datos disponibles para esa consulta."
+    
+    except Exception as e:
+        print(f"[FIREBASE QUERY] error: {e}")
+        return f"Error al consultar Firebase: {str(e)}"
+
+
 @app.route('/api/ai_chat', methods=['POST'])
 def api_ai_chat():
     # Solo tendero puede usar el asistente
@@ -733,7 +903,129 @@ def api_ai_chat():
     msg = (data.get('message') or '').strip()
     if not msg:
         return {'error': 'Mensaje vacío'}, 400
+    
+    # Construir contexto del negocio del tendero para la IA
+    tendero_id = session.get('user')
+    
+    # Determinar tipo de consulta basado en palabras clave
+    msg_lower = msg.lower()
+    query_type = None
+    
+    if any(word in msg_lower for word in ['deuda', 'debo', 'debe', 'pago', 'abono', 'acreedor']):
+        query_type = 'deudas'
+    elif any(word in msg_lower for word in ['producto', 'precio', 'caro', 'barato', 'inventario', 'mercancía']):
+        query_type = 'productos'
+    elif any(word in msg_lower for word in ['cliente', 'comprador', 'usuario']):
+        query_type = 'clientes'
+    elif any(word in msg_lower for word in ['stock', 'cantidad', 'falta', 'poco', 'agotado']):
+        query_type = 'stock'
+    
+    # Ejecutar consulta Firebase si se detectó tipo
+    firebase_data = ""
+    if query_type:
+        firebase_data = _execute_firebase_query(tendero_id, query_type)
+        print(f"[AI CHAT] Firebase query: {query_type}")
+    
+    # Construir mensaje para la IA con datos reales de Firebase
+    full_message = f"""Eres un asistente de negocios para tenderos. Responde preguntas sobre sus tiendas, productos, clientes y deudas.
+
+DATOS DE FIREBASE (actualizados en tiempo real):
+{firebase_data}
+
+Pregunta del usuario: {msg}
+
+Responde de forma concisa, útil y en español. Si pregunta sobre datos específicos, utiliza los datos de Firebase que se proporcionaron arriba."""
+    
     try:
+        # Si hay una llave de QROQ configurada, proxear la petición a la API externa.
+        # La llave debe estar en la variable de entorno QROQ_API_KEY.
+        qroq_key = os.environ.get('QROQ_API_KEY')
+        if qroq_key:
+            # Preferir usar la librería "groq" si está instalada y soporta streaming
+            try:
+                from groq import Groq
+                # Groq client puede leer la variable de entorno GROQ_API_KEY, así que la dejamos disponible
+                os.environ.setdefault('GROQ_API_KEY', qroq_key)
+                client = Groq()
+                # Construir la conversación mínima
+                completion = client.chat.completions.create(
+                    model="openai/gpt-oss-20b",
+                    messages=[{"role": "user", "content": full_message}],
+                    temperature=1,
+                    max_completion_tokens=1024,
+                    top_p=1,
+                    reasoning_effort="medium",
+                    stream=True,
+                    stop=None
+                )
+                # Si la API es de streaming, iteramos los chunks y los concatenamos
+                reply_parts = []
+                try:
+                    for chunk in completion:
+                        try:
+                            delta = chunk.choices[0].delta
+                            # delta puede tener 'content' o ser None
+                            piece = getattr(delta, 'content', None) if hasattr(delta, '__dict__') else (delta.get('content') if isinstance(delta, dict) else None)
+                            if piece:
+                                reply_parts.append(piece)
+                        except Exception:
+                            # Ignorar pedazos malformados
+                            continue
+                except TypeError:
+                    # Si completion no es iterable (no streaming), intentar obtener texto directamente
+                    try:
+                        text = getattr(completion, 'text', None) or getattr(completion, 'message', None) or str(completion)
+                        if text:
+                            reply_parts.append(text)
+                    except Exception:
+                        pass
+
+                reply = ''.join(reply_parts).strip()
+                if not reply:
+                    reply = 'El proveedor external respondió sin contenido.'
+                print('[AI PROXY] used groq client')
+                return {'reply': reply}, 200
+            except ImportError:
+                print('[AI PROXY] groq library not installed, falling back to HTTP proxy')
+            except Exception as e:
+                print(f"[AI PROXY] groq error: {e}")
+
+            # Fallback HTTP attempt (en caso groq no esté disponible)
+            try:
+                headers = {
+                    'Authorization': f'Bearer {qroq_key}',
+                    'Content-Type': 'application/json'
+                }
+                payload = {'input': msg}
+                resp = requests.post('https://api.qroq.ai/v1/chat', json=payload, headers=headers, timeout=15)
+                if resp.status_code >= 400:
+                    print(f"[AI PROXY] provider error: {resp.status_code} {resp.text}")
+                    return {'error': 'Error desde el proveedor de AI'}, 502
+                data_resp = resp.json()
+                # Extraer respuesta de forma robusta
+                reply = None
+                if isinstance(data_resp, dict):
+                    reply = data_resp.get('reply') or data_resp.get('message')
+                    if not reply:
+                        choices = data_resp.get('choices') or data_resp.get('outputs')
+                        if isinstance(choices, list) and len(choices) > 0:
+                            first = choices[0]
+                            if isinstance(first, dict):
+                                reply = first.get('text') or first.get('message') or first.get('output')
+                            else:
+                                reply = str(first)
+                    if not reply:
+                        reply = data_resp.get('result')
+                if not reply:
+                    reply = str(data_resp)
+                print('[AI PROXY] used http fallback')
+                return {'reply': reply}, 200
+            except requests.RequestException as re:
+                print(f"[AI PROXY] request error: {re}")
+            except Exception as e:
+                print(f"[AI PROXY] unexpected error: {e}")
+
+        # Si no hay llave o las llamadas al proveedor fallaron, usar motor local como fallback
         reply = _handle_finance_message(msg)
         return {'reply': reply}, 200
     except Exception as e:
